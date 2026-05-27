@@ -175,4 +175,4 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
     return { mirrored, skipped: uploads.length - mirrored, errors };
 }
 
-module.exports = { mirrorFxap, extractPackTo };
+module.exports = { mirrorFxap, extractPackTo, syncWorkspaceToMirror, MIRROR_EXCLUDE_PATHS };
