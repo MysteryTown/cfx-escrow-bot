@@ -341,7 +341,8 @@ class CFXPortal {
         const totalSize = zipBuffer.length;
         const chunkCount = Math.ceil(totalSize / chunkSize);
 
-        console.log(`[CFX] Starting re-upload: ${filename} (${totalSize} bytes, ${chunkCount} chunks)`);
+        const version = `1.0.${Math.floor(Date.now() / 1000)}`;
+        console.log(`[CFX] Starting re-upload: ${filename} (${totalSize} bytes, ${chunkCount} chunks) as v${version}`);
 
         const response = await this.apiRequest(
             'POST',
@@ -352,7 +353,7 @@ class CFXPortal {
                 name: filename,
                 original_file_name: filename,
                 total_size: totalSize,
-                version: '1.0.0',
+                version,
                 changelog: 'Automated re-upload',
                 release_candidate: false
             }
