@@ -46,21 +46,61 @@ function extractPackTo(zipBuffer, destDir, expectedFolderName) {
     return { entryCount: entries.filter(e => !e.isDirectory).length, strippedPrefix: stripPrefix };
 }
 
-function syncWorkspaceToMirror(workspaceDir, mirrorDir) {
-    let filesDeleted = 0, filesCopied = 0;
-    for (const entry of fs.readdirSync(mirrorDir)) {
-        if (entry === '.git') continue;
-        rmrf(path.join(mirrorDir, entry));
-        filesDeleted++;
+const MIRROR_EXCLUDE_TOP = new Set(['.git']);
+const MIRROR_EXCLUDE_PATHS = [
+    '.github/workflows',
+];
+
+function shouldSkipPath(relPath) {
+    const normalized = relPath.split(path.sep).join('/');
+    return MIRROR_EXCLUDE_PATHS.some(p => normalized === p || normalized.startsWith(p + '/'));
+}
+
+function copyRespectingExclusions(src, dest, baseSrc) {
+    const stat = fs.statSync(src);
+    const rel = path.relative(baseSrc, src);
+    if (rel && shouldSkipPath(rel)) return;
+    if (stat.isDirectory()) {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const entry of fs.readdirSync(src)) {
+            copyRespectingExclusions(path.join(src, entry), path.join(dest, entry), baseSrc);
+        }
+    } else {
+        fs.mkdirSync(path.dirname(dest), { recursive: true });
+        fs.copyFileSync(src, dest);
     }
+}
+
+function clearRespectingExclusions(dir, baseDir) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir)) {
+        const full = path.join(dir, entry);
+        const rel = path.relative(baseDir, full);
+        if (MIRROR_EXCLUDE_TOP.has(entry) && full === path.join(baseDir, entry)) continue;
+        if (shouldSkipPath(rel)) continue;
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+            clearRespectingExclusions(full, baseDir);
+            try { fs.rmdirSync(full); } catch {}
+        } else {
+            fs.unlinkSync(full);
+        }
+    }
+}
+
+function syncWorkspaceToMirror(workspaceDir, mirrorDir) {
+    clearRespectingExclusions(mirrorDir, mirrorDir);
+
+    let copied = 0;
     for (const entry of fs.readdirSync(workspaceDir)) {
-        if (entry === '.git') continue;
+        if (MIRROR_EXCLUDE_TOP.has(entry)) continue;
         const src = path.join(workspaceDir, entry);
         const dest = path.join(mirrorDir, entry);
-        fs.cpSync(src, dest, { recursive: true, force: true });
-        filesCopied++;
+        copyRespectingExclusions(src, dest, workspaceDir);
+        copied++;
     }
-    return { filesDeleted, filesCopied };
+    console.log(`[mirror] Excluded from sync: ${MIRROR_EXCLUDE_PATHS.map(p => `'${p}'`).join(', ')}`);
+    return { filesCopied: copied };
 }
 
 async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorBranch, workspace }) {
@@ -89,7 +129,7 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
 
     console.log(`[mirror] Syncing full workspace tree → mirror clone`);
     const sync = syncWorkspaceToMirror(workspace, cloneDir);
-    console.log(`[mirror] Cleared ${sync.filesDeleted} top-level entries, copied ${sync.filesCopied} from workspace`);
+    console.log(`[mirror] Copied ${sync.filesCopied} top-level entries from workspace`);
 
     let mirrored = 0;
     const errors = [];
