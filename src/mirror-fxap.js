@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const { execFileSync } = require('child_process');
 const AdmZip = require('adm-zip');
+const { findResourcesWithMarker, readEscrowMarker } = require('./escrow-resource');
 
 function git(args, opts = {}) {
     return execFileSync('git', args, {
@@ -132,7 +133,10 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
     console.log(`[mirror] Copied ${sync.filesCopied} top-level entries from workspace`);
 
     let mirrored = 0;
+    let caughtUp = 0;
     const errors = [];
+    const uploadedDirs = new Set(uploads.map(u => path.resolve(u.resourceDir)));
+
     for (const up of uploads) {
         try {
             console.log(`[mirror] ${up.resource}: downloading FXAP pack...`);
@@ -146,6 +150,52 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
             console.error(`[mirror] FAIL ${up.resource}: ${e.message}`);
             errors.push({ resource: up.resource, error: e.message });
         }
+    }
+
+    const allMarked = findResourcesWithMarker(null, [workspace]);
+    const catchupCandidates = allMarked.filter(d => !uploadedDirs.has(path.resolve(d)));
+    if (catchupCandidates.length) {
+        console.log(`[mirror] Catch-up scan: ${catchupCandidates.length} marked resource(s) not uploaded this run`);
+    }
+
+    for (const resourceDir of catchupCandidates) {
+        const folderName = path.basename(resourceDir);
+        const marker = readEscrowMarker(resourceDir);
+        if (!marker || !marker.assetId) {
+            console.log(`[mirror] ${folderName}: skip catch-up (no asset id in .escrow)`);
+            continue;
+        }
+
+        const relPath = path.relative(workspace, resourceDir).split(path.sep).join('/');
+        const mirrorResourceDir = path.join(cloneDir, relPath);
+        const fxapMarkerPath = path.join(mirrorResourceDir, '.fxap');
+
+        if (fs.existsSync(fxapMarkerPath)) {
+            console.log(`[mirror] ${folderName}: mirror already has .fxap, skip`);
+            continue;
+        }
+
+        if (!cfxPortal) {
+            console.warn(`[mirror] ${folderName}: missing .fxap but no CFX session; cannot catch up`);
+            errors.push({ resource: folderName, error: 'cfx portal not authenticated for catch-up' });
+            continue;
+        }
+
+        try {
+            console.log(`[mirror] ${folderName}: catching up — downloading FXAP for asset ${marker.assetId}`);
+            const pack = await cfxPortal.downloadPack(marker.assetId);
+            const { entryCount, strippedPrefix } = extractPackTo(pack.zipBuffer, mirrorResourceDir, folderName);
+            console.log(`[mirror] ${folderName}: caught up at ${relPath} with ${entryCount} FXAP files${strippedPrefix ? ` (stripped "${strippedPrefix}")` : ''}`);
+            caughtUp++;
+            mirrored++;
+        } catch (e) {
+            console.error(`[mirror] catch-up FAIL ${folderName}: ${e.message}`);
+            errors.push({ resource: folderName, error: e.message });
+        }
+    }
+
+    if (caughtUp) {
+        console.log(`[mirror] Caught up FXAP for ${caughtUp} resource(s) that hadn't been mirrored before`);
     }
 
     git(['add', '-A'], { cwd: cloneDir });

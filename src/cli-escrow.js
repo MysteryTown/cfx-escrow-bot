@@ -77,10 +77,11 @@ async function main() {
     }
 
     let portal = null;
-    if (targets.length) {
+    const needCfx = targets.length > 0 || wantsMirror;
+    if (needCfx) {
         const cookie = process.env.CFX_FORUM_COOKIE;
         if (!cookie) {
-            console.error('[escrow] CFX_FORUM_COOKIE env var is required for uploads');
+            console.error('[escrow] CFX_FORUM_COOKIE env var is required (uploads or mirror catch-up need it)');
             process.exit(1);
         }
         portal = new CFXPortal(cookie);
