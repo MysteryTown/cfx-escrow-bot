@@ -165,9 +165,6 @@ class CFXPortal {
         }
     }
 
-    /**
-     * Make an authenticated API request
-     */
     async apiRequest(method, url, data = null, headers = {}) {
         if (!this.cookies) {
             throw new Error('Not authenticated. Call authenticate() first.');
@@ -179,7 +176,8 @@ class CFXPortal {
             headers: {
                 'Cookie': this.cookies,
                 ...headers
-            }
+            },
+            validateStatus: (s) => s >= 200 && s < 300,
         };
 
         if (data) {
@@ -189,7 +187,19 @@ class CFXPortal {
             }
         }
 
-        return axios(config);
+        try {
+            return await axios(config);
+        } catch (error) {
+            if (error.response) {
+                const body = error.response.data;
+                let bodyStr;
+                if (Buffer.isBuffer(body)) bodyStr = body.toString('utf8').slice(0, 800);
+                else if (typeof body === 'object') bodyStr = JSON.stringify(body).slice(0, 800);
+                else bodyStr = String(body).slice(0, 800);
+                console.error(`[CFX] ${method} ${url.replace(/^https?:\/\/[^/]+/, '')} → ${error.response.status}: ${bodyStr}`);
+            }
+            throw error;
+        }
     }
 
     /**
