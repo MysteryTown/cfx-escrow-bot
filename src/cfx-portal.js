@@ -12,6 +12,17 @@ const URLS = {
     SEARCH_ASSETS: 'me/assets',
 };
 
+function isMostlyPrintable(s) {
+    if (!s) return true;
+    const sample = s.slice(0, 200);
+    let printable = 0;
+    for (let i = 0; i < sample.length; i++) {
+        const c = sample.charCodeAt(i);
+        if ((c >= 32 && c < 127) || c === 9 || c === 10 || c === 13) printable++;
+    }
+    return printable / sample.length > 0.9;
+}
+
 class CFXPortal {
     constructor(forumCookie) {
         this.forumCookie = forumCookie;
@@ -193,11 +204,23 @@ class CFXPortal {
         } catch (error) {
             if (error.response) {
                 const body = error.response.data;
-                let bodyStr;
-                if (Buffer.isBuffer(body)) bodyStr = body.toString('utf8').slice(0, 800);
-                else if (typeof body === 'object') bodyStr = JSON.stringify(body).slice(0, 800);
-                else bodyStr = String(body).slice(0, 800);
-                console.error(`[CFX] ${method} ${url.replace(/^https?:\/\/[^/]+/, '')} → ${error.response.status}: ${bodyStr}`);
+                const status = error.response.status;
+                const shortUrl = url.replace(/^https?:\/\/[^/]+/, '');
+                let bodyStr = '';
+                if (body == null) {
+                    bodyStr = '<empty>';
+                } else if (Buffer.isBuffer(body)) {
+                    bodyStr = `<binary, ${body.length} bytes>`;
+                } else if (typeof body === 'string') {
+                    bodyStr = isMostlyPrintable(body) ? body.slice(0, 500) : `<binary-ish string, ${body.length} chars>`;
+                } else if (typeof body === 'object') {
+                    try { bodyStr = JSON.stringify(body).slice(0, 800); } catch { bodyStr = '<unserializable>'; }
+                } else {
+                    bodyStr = String(body).slice(0, 200);
+                }
+                console.error(`[CFX] ${method} ${shortUrl} → ${status}: ${bodyStr}`);
+            } else if (error.code) {
+                console.error(`[CFX] ${method} ${url}: network error ${error.code}`);
             }
             throw error;
         }
