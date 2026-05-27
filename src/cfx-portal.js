@@ -269,27 +269,27 @@ class CFXPortal {
         console.log(`[CFX] Creating new asset: ${name}`);
         console.log(`[CFX] File: ${filename} (${totalSize} bytes, ${chunkCount} chunks)`);
 
-        const response = await axios({
-            method: 'POST',
-            url: `${URLS.API}me/assets`,
-            data: {
-                name,
-                chunk_count: chunkCount,
-                chunk_size: chunkSize,
-                total_size: totalSize,
-                original_file_name: filename
-            },
-            headers: {
-                'Cookie': this.cookies,
-                'Content-Type': 'application/json',
-            },
-        });
+        const payload = {
+            name,
+            chunk_count: chunkCount,
+            chunk_size: chunkSize,
+            total_size: totalSize,
+            original_file_name: filename
+        };
+        console.log(`[CFX] create payload: ${JSON.stringify(payload)}`);
+
+        const response = await this.apiRequest(
+            'POST',
+            `${URLS.API}me/assets`,
+            payload,
+            { 'Content-Type': 'application/json' }
+        );
 
         const data = response.data;
+        console.log(`[CFX] create response: ${JSON.stringify(data).slice(0, 500)}`);
         const assetId = data.asset_id || data.id;
         const versionId = data.version_id || data.version?.id || data.versions?.[0]?.id;
         if (!assetId || !versionId) {
-            console.error('[CFX] Create response:', JSON.stringify(data));
             throw new Error(`Failed to create asset - missing ${!assetId ? 'asset_id' : 'version_id'} in response`);
         }
 
