@@ -8,6 +8,7 @@ const URLS = {
     REUPLOAD: 'assets/{id}/re-upload',
     UPLOAD_CHUNK: 'assets/{id}/versions/{vid}/upload-chunk',
     COMPLETE_UPLOAD: 'assets/{id}/versions/{vid}/complete-upload',
+    DOWNLOAD: 'assets/{id}/versions/{vid}/packs/{pid}/download',
     SEARCH_ASSETS: 'me/assets',
 };
 
@@ -399,9 +400,47 @@ class CFXPortal {
         return { success: true, versionId };
     }
 
-    /**
-     * Get portal session/user info
-     */
+    async findAssetWithVersions(assetId) {
+        const assets = await this.getAssets();
+        const asset = assets.find(a => a.id === parseInt(assetId, 10));
+        if (!asset) return null;
+        if (!asset.versions?.length) return { ...asset, latestVersion: null, latestPack: null };
+        const versions = [...asset.versions].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        const latestVersion = versions[0];
+        const latestPack = latestVersion.packs?.[0] || null;
+        return { ...asset, latestVersion, latestPack };
+    }
+
+    async getPackDownloadUrl(assetId, versionId, packId) {
+        const url = this.getUrl('DOWNLOAD', { id: assetId, vid: versionId, pid: packId });
+        const response = await this.apiRequest('GET', url);
+        if (!response.data?.url) {
+            throw new Error(`Download endpoint returned no url: ${JSON.stringify(response.data).slice(0, 200)}`);
+        }
+        return response.data.url;
+    }
+
+    async downloadPack(assetId) {
+        const asset = await this.findAssetWithVersions(assetId);
+        if (!asset) throw new Error(`Asset ${assetId} not found in /me/assets`);
+        if (!asset.latestVersion) throw new Error(`Asset ${assetId} has no versions yet`);
+        if (!asset.latestPack) throw new Error(`Asset ${assetId} version ${asset.latestVersion.id} has no packs`);
+
+        console.log(`[CFX] Downloading asset ${assetId} (${asset.name}) version ${asset.latestVersion.id} pack ${asset.latestPack.id}`);
+        const signedUrl = await this.getPackDownloadUrl(assetId, asset.latestVersion.id, asset.latestPack.id);
+
+        const response = await axios.get(signedUrl, { responseType: 'arraybuffer', maxContentLength: Infinity, maxBodyLength: Infinity });
+        const buffer = Buffer.from(response.data);
+        console.log(`[CFX] Downloaded ${(buffer.length / 1024 / 1024).toFixed(2)} MB for ${asset.name}`);
+        return {
+            assetId: asset.id,
+            name: asset.name,
+            versionId: asset.latestVersion.id,
+            packId: asset.latestPack.id,
+            zipBuffer: buffer,
+        };
+    }
+
     async getPortalSession() {
         if (!this.authenticated) return null;
         

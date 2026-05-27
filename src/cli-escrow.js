@@ -3,27 +3,38 @@ const path = require('path');
 const fs = require('fs');
 const CFXPortal = require('./cfx-portal');
 const { findResourcesWithMarker, escrowResource } = require('./escrow-resource');
+const { mirrorFxap } = require('./mirror-fxap');
 
 function parseArgs(argv) {
-    const args = { resources: [], scanRoots: [], all: false };
+    const args = { resources: [], scanRoots: [], all: false, mirrorRepo: null, mirrorToken: null, mirrorBranch: 'main', workspace: process.cwd() };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--resource' || a === '-r') args.resources.push(argv[++i]);
         else if (a === '--scan' || a === '-s') args.scanRoots.push(argv[++i]);
         else if (a === '--all') args.all = true;
+        else if (a === '--mirror-repo') args.mirrorRepo = argv[++i];
+        else if (a === '--mirror-token') args.mirrorToken = argv[++i];
+        else if (a === '--mirror-branch') args.mirrorBranch = argv[++i];
+        else if (a === '--workspace') args.workspace = argv[++i];
         else if (a === '--help' || a === '-h') {
             console.log(`Usage:
   cli-escrow --resource <dir>         Upload a single resource folder (must contain .escrow)
   cli-escrow --scan <dir>             Scan dir for resources with .escrow markers
   cli-escrow --all                    Scan cwd recursively
 
+Mirror options (download FXAP and commit to escrowed repo):
+  --mirror-repo <owner/repo>          Target escrowed repo (e.g. MysteryTown/MT08-Escrowed)
+  --mirror-token <pat>                PAT with push access on the mirror repo
+  --mirror-branch <branch>            Default: main
+  --workspace <dir>                   Source repo root; resource paths inside this become paths in the mirror
+
 Env:
   CFX_FORUM_COOKIE   Required. Your forum.cfx.re _t cookie.
 
 Exit codes:
-  0  All resources uploaded
+  0  All resources uploaded (and mirror succeeded if enabled)
   1  Auth or fatal error
-  2  One or more resources failed (others may have succeeded)`);
+  2  One or more resources failed`);
             process.exit(0);
         }
         else args.resources.push(a);
@@ -81,11 +92,32 @@ async function main() {
         try {
             const result = await escrowResource(portal, dir);
             console.log(`[escrow] OK ${result.resource} → asset ${result.assetId} (${result.action})`);
-            results.push({ ok: true, ...result });
+            results.push({ ok: true, resourceDir: dir, ...result });
         } catch (e) {
             console.error(`[escrow] FAIL ${dir}: ${e.message}`);
             hadFailure = true;
-            results.push({ ok: false, resource: path.basename(dir), error: e.message });
+            results.push({ ok: false, resourceDir: dir, resource: path.basename(dir), error: e.message });
+        }
+    }
+
+    if (args.mirrorRepo) {
+        const uploads = results.filter(r => r.ok);
+        if (uploads.length) {
+            try {
+                console.log(`[mirror] Starting FXAP mirror to ${args.mirrorRepo}:${args.mirrorBranch}`);
+                const summary = await mirrorFxap(portal, uploads, {
+                    mirrorRepo: args.mirrorRepo,
+                    mirrorToken: args.mirrorToken,
+                    mirrorBranch: args.mirrorBranch,
+                    workspace: path.resolve(args.workspace),
+                });
+                console.log(`[mirror] Done. ${summary.mirrored} mirrored, ${summary.skipped} skipped${summary.errors?.length ? `, ${summary.errors.length} errors` : ''}`);
+            } catch (e) {
+                console.error(`[mirror] FAILED: ${e.message}`);
+                hadFailure = true;
+            }
+        } else {
+            console.log('[mirror] No successful uploads; skipping mirror.');
         }
     }
 

@@ -30,7 +30,7 @@ inputs:
     required: false
     default: 'chore(escrow): update asset ids [skip ci]'
   mirror-repo:
-    description: 'Mirror target like `org/repo-Escrowed`. Empty disables mirroring.'
+    description: 'Escrowed repo to receive downloaded FXAP files, e.g. `org/repo-Escrowed`. Empty disables mirroring.'
     required: false
     default: ''
   mirror-token:
@@ -38,7 +38,7 @@ inputs:
     required: false
     default: ''
   mirror-branch:
-    description: 'Branch to push to on the mirror repo.'
+    description: 'Branch on the mirror repo to commit to.'
     required: false
     default: 'main'
 
@@ -117,6 +117,9 @@ runs:
       shell: bash
       env:
         CFX_FORUM_COOKIE: ${{ inputs.forum-cookie }}
+        MIRROR_REPO: ${{ inputs.mirror-repo }}
+        MIRROR_TOKEN: ${{ inputs.mirror-token }}
+        MIRROR_BRANCH: ${{ inputs.mirror-branch }}
       run: |
         set -euo pipefail
         cd "${GITHUB_WORKSPACE}"
@@ -125,6 +128,17 @@ runs:
           [ -z "$line" ] && continue
           args+=("--resource" "$line")
         done < /tmp/escrow-targets.txt
+
+        if [ -n "${MIRROR_REPO}" ]; then
+          if [ -z "${MIRROR_TOKEN}" ]; then
+            echo "::error::mirror-repo set but mirror-token is empty"; exit 1
+          fi
+          args+=("--mirror-repo" "${MIRROR_REPO}")
+          args+=("--mirror-token" "${MIRROR_TOKEN}")
+          args+=("--mirror-branch" "${MIRROR_BRANCH}")
+          args+=("--workspace" "${GITHUB_WORKSPACE}")
+        fi
+
         node "${{ github.action_path }}/src/cli-escrow.js" "${args[@]}"
 
     - name: Commit updated .escrow files
@@ -149,25 +163,3 @@ runs:
         branch="${GITHUB_REF_NAME}"
         git push origin "HEAD:${branch}"
 
-    - name: Mirror to escrowed repo
-      if: inputs.mirror-repo != ''
-      shell: bash
-      env:
-        MIRROR_REPO:   ${{ inputs.mirror-repo }}
-        MIRROR_TOKEN:  ${{ inputs.mirror-token }}
-        MIRROR_BRANCH: ${{ inputs.mirror-branch }}
-      run: |
-        set -euo pipefail
-        cd "${GITHUB_WORKSPACE}"
-        if [ -z "${MIRROR_TOKEN}" ]; then
-          echo "::error::mirror-repo set but mirror-token is empty"
-          exit 1
-        fi
-        remote_url="https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
-        git remote remove escrow-mirror 2>/dev/null || true
-        git remote add escrow-mirror "${remote_url}"
-        # Disable thin-pack optimization: when pushing to an empty mirror, git
-        # would otherwise omit objects it assumes the remote has, causing
-        # "did not receive expected object" errors on first push.
-        git -c pack.useSparse=false -c protocol.version=2 push --no-thin --force escrow-mirror "HEAD:${MIRROR_BRANCH}"
-        echo "[mirror] Pushed HEAD → ${MIRROR_REPO}:${MIRROR_BRANCH}"
