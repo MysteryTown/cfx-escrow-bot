@@ -274,9 +274,10 @@ class CFXPortal {
             chunk_count: chunkCount,
             chunk_size: chunkSize,
             total_size: totalSize,
-            original_file_name: filename
+            original_file_name: filename,
+            release_candidate: false,
+            version: '1.0.0'
         };
-        console.log(`[CFX] create payload: ${JSON.stringify(payload)}`);
 
         const response = await this.apiRequest(
             'POST',
@@ -286,7 +287,6 @@ class CFXPortal {
         );
 
         const data = response.data;
-        console.log(`[CFX] create response: ${JSON.stringify(data).slice(0, 500)}`);
         const assetId = data.asset_id || data.id;
         const versionId = data.version_id || data.version?.id || data.versions?.[0]?.id;
         if (!assetId || !versionId) {
