@@ -45,12 +45,6 @@ Exit codes:
 async function main() {
     const args = parseArgs(process.argv);
 
-    const cookie = process.env.CFX_FORUM_COOKIE;
-    if (!cookie) {
-        console.error('[escrow] CFX_FORUM_COOKIE env var is required');
-        process.exit(1);
-    }
-
     let targets = [...args.resources.map(r => path.resolve(r))];
     if (args.scanRoots.length || args.all) {
         const roots = args.scanRoots.length ? args.scanRoots : [process.cwd()];
@@ -69,22 +63,35 @@ async function main() {
         return true;
     });
 
-    if (!targets.length) {
-        console.log('[escrow] No resources to upload.');
+    const wantsMirror = !!args.mirrorRepo;
+    if (!targets.length && !wantsMirror) {
+        console.log('[escrow] Nothing to do (no resources, no mirror).');
         process.exit(0);
     }
 
-    console.log(`[escrow] ${targets.length} resource(s) to upload:`);
-    targets.forEach(t => console.log(`  - ${t}`));
-
-    const portal = new CFXPortal(cookie);
-    const authed = await portal.authenticate();
-    if (!authed) {
-        console.error('[escrow] CFX authentication failed. Check CFX_FORUM_COOKIE.');
-        await portal.close();
-        process.exit(1);
+    if (targets.length) {
+        console.log(`[escrow] ${targets.length} resource(s) to upload:`);
+        targets.forEach(t => console.log(`  - ${t}`));
+    } else {
+        console.log('[escrow] No resources to upload this run; will still sync mirror if configured.');
     }
-    await portal.close();
+
+    let portal = null;
+    if (targets.length) {
+        const cookie = process.env.CFX_FORUM_COOKIE;
+        if (!cookie) {
+            console.error('[escrow] CFX_FORUM_COOKIE env var is required for uploads');
+            process.exit(1);
+        }
+        portal = new CFXPortal(cookie);
+        const authed = await portal.authenticate();
+        if (!authed) {
+            console.error('[escrow] CFX authentication failed. Check CFX_FORUM_COOKIE.');
+            await portal.close();
+            process.exit(1);
+        }
+        await portal.close();
+    }
 
     const results = [];
     let hadFailure = false;
@@ -100,24 +107,20 @@ async function main() {
         }
     }
 
-    if (args.mirrorRepo) {
+    if (wantsMirror) {
         const uploads = results.filter(r => r.ok);
-        if (uploads.length) {
-            try {
-                console.log(`[mirror] Starting FXAP mirror to ${args.mirrorRepo}:${args.mirrorBranch}`);
-                const summary = await mirrorFxap(portal, uploads, {
-                    mirrorRepo: args.mirrorRepo,
-                    mirrorToken: args.mirrorToken,
-                    mirrorBranch: args.mirrorBranch,
-                    workspace: path.resolve(args.workspace),
-                });
-                console.log(`[mirror] Done. ${summary.mirrored} mirrored, ${summary.skipped} skipped${summary.errors?.length ? `, ${summary.errors.length} errors` : ''}`);
-            } catch (e) {
-                console.error(`[mirror] FAILED: ${e.message}`);
-                hadFailure = true;
-            }
-        } else {
-            console.log('[mirror] No successful uploads; skipping mirror.');
+        try {
+            console.log(`[mirror] Syncing workspace + ${uploads.length} FXAP overlay(s) → ${args.mirrorRepo}:${args.mirrorBranch}`);
+            const summary = await mirrorFxap(portal, uploads, {
+                mirrorRepo: args.mirrorRepo,
+                mirrorToken: args.mirrorToken,
+                mirrorBranch: args.mirrorBranch,
+                workspace: path.resolve(args.workspace),
+            });
+            console.log(`[mirror] Done. ${summary.mirrored ?? 0} mirrored, ${summary.skipped ?? 0} skipped${summary.errors?.length ? `, ${summary.errors.length} errors` : ''}${summary.noop ? ' (no changes)' : ''}`);
+        } catch (e) {
+            console.error(`[mirror] FAILED: ${e.message}`);
+            hadFailure = true;
         }
     }
 

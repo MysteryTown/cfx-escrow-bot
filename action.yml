@@ -111,9 +111,9 @@ runs:
         echo "[resolve] ${count} resource(s) to process"
         cat /tmp/escrow-targets.txt || true
 
-    - name: Run escrow uploader
+    - name: Run escrow uploader and mirror
       id: escrow
-      if: steps.resolve.outputs.count != '0'
+      if: steps.resolve.outputs.count != '0' || inputs.mirror-repo != ''
       shell: bash
       env:
         CFX_FORUM_COOKIE: ${{ inputs.forum-cookie }}
