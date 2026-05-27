@@ -1,0 +1,170 @@
+name: 'CFX Escrow Upload'
+description: 'Detect resources marked with .escrow, upload/re-upload to CFX portal, commit asset IDs back, optionally mirror to an escrowed repo.'
+author: 'Laith'
+branding:
+  icon: 'package'
+  color: 'purple'
+
+inputs:
+  forum-cookie:
+    description: 'forum.cfx.re _t cookie (use a secret).'
+    required: true
+  resources-root:
+    description: 'Directory to scan for .escrow markers.'
+    required: false
+    default: '.'
+  changed-only:
+    description: 'If true, only upload resources changed in the pushed commits. Otherwise scan everything.'
+    required: false
+    default: 'true'
+  base-ref:
+    description: 'Git ref to diff against when changed-only is true. Defaults to the push event before-SHA.'
+    required: false
+    default: ''
+  commit-back:
+    description: 'Commit updated .escrow files back to the source branch.'
+    required: false
+    default: 'true'
+  commit-message:
+    description: 'Commit message used when commit-back is true.'
+    required: false
+    default: 'chore(escrow): update asset ids [skip ci]'
+  mirror-repo:
+    description: 'Mirror target like `org/repo-Escrowed`. Empty disables mirroring.'
+    required: false
+    default: ''
+  mirror-token:
+    description: 'PAT with push access to mirror-repo. Required if mirror-repo is set.'
+    required: false
+    default: ''
+  mirror-branch:
+    description: 'Branch to push to on the mirror repo.'
+    required: false
+    default: 'main'
+
+outputs:
+  uploaded:
+    description: 'Number of resources successfully uploaded.'
+    value: ${{ steps.escrow.outputs.uploaded }}
+  failed:
+    description: 'Number of resources that failed.'
+    value: ${{ steps.escrow.outputs.failed }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install bot dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci --omit=dev || npm install --omit=dev
+
+    - name: Resolve changed resources
+      id: resolve
+      shell: bash
+      env:
+        CHANGED_ONLY: ${{ inputs.changed-only }}
+        BASE_REF: ${{ inputs.base-ref }}
+        RESOURCES_ROOT: ${{ inputs.resources-root }}
+        EVENT_BEFORE: ${{ github.event.before }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}"
+
+        scan_all() {
+          echo "[resolve] Scanning all under ${RESOURCES_ROOT} for .escrow markers"
+          find "${RESOURCES_ROOT}" -name .escrow -not -path '*/node_modules/*' -not -path '*/.git/*' -printf '%h\n' | sort -u
+        }
+
+        if [ "${CHANGED_ONLY}" != "true" ]; then
+          scan_all > /tmp/escrow-targets.txt
+        else
+          base="${BASE_REF}"
+          if [ -z "${base}" ]; then base="${EVENT_BEFORE:-}"; fi
+          if [ -z "${base}" ] || [ "${base}" = "0000000000000000000000000000000000000000" ]; then
+            echo "[resolve] No base SHA; falling back to full scan"
+            scan_all > /tmp/escrow-targets.txt
+          else
+            echo "[resolve] Diffing ${base}..HEAD"
+            git fetch --no-tags --depth=50 origin "${base}" 2>/dev/null || true
+            changed=$(git diff --name-only "${base}" HEAD || true)
+            if [ -z "${changed}" ]; then
+              : > /tmp/escrow-targets.txt
+            else
+              echo "${changed}" | while IFS= read -r f; do
+                d="$(dirname "$f")"
+                while [ "$d" != "." ] && [ "$d" != "/" ]; do
+                  if [ -f "$d/.escrow" ]; then echo "$d"; break; fi
+                  d="$(dirname "$d")"
+                done
+              done | sort -u > /tmp/escrow-targets.txt
+            fi
+          fi
+        fi
+
+        count=$(wc -l < /tmp/escrow-targets.txt | tr -d ' ')
+        echo "count=${count}" >> "$GITHUB_OUTPUT"
+        echo "[resolve] ${count} resource(s) to process"
+        cat /tmp/escrow-targets.txt || true
+
+    - name: Run escrow uploader
+      id: escrow
+      if: steps.resolve.outputs.count != '0'
+      shell: bash
+      env:
+        CFX_FORUM_COOKIE: ${{ inputs.forum-cookie }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}"
+        args=()
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          args+=("--resource" "$line")
+        done < /tmp/escrow-targets.txt
+        node "${{ github.action_path }}/src/cli-escrow.js" "${args[@]}"
+
+    - name: Commit updated .escrow files
+      if: steps.resolve.outputs.count != '0' && inputs.commit-back == 'true'
+      shell: bash
+      env:
+        COMMIT_MSG: ${{ inputs.commit-message }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}"
+        git config user.name  'github-actions[bot]'
+        git config user.email 'github-actions[bot]@users.noreply.github.com'
+
+        mapfile -t escrow_files < <(git ls-files --modified --others --exclude-standard | grep -E '(^|/)\.escrow$' || true)
+        if [ ${#escrow_files[@]} -eq 0 ]; then
+          echo "[commit] No .escrow changes to commit"
+          exit 0
+        fi
+        printf '[commit] staging:\n'; printf '  %s\n' "${escrow_files[@]}"
+        git add -- "${escrow_files[@]}"
+        git commit -m "${COMMIT_MSG}"
+        branch="${GITHUB_REF_NAME}"
+        git push origin "HEAD:${branch}"
+
+    - name: Mirror to escrowed repo
+      if: inputs.mirror-repo != ''
+      shell: bash
+      env:
+        MIRROR_REPO:   ${{ inputs.mirror-repo }}
+        MIRROR_TOKEN:  ${{ inputs.mirror-token }}
+        MIRROR_BRANCH: ${{ inputs.mirror-branch }}
+      run: |
+        set -euo pipefail
+        cd "${GITHUB_WORKSPACE}"
+        if [ -z "${MIRROR_TOKEN}" ]; then
+          echo "::error::mirror-repo set but mirror-token is empty"
+          exit 1
+        fi
+        remote_url="https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
+        git remote remove escrow-mirror 2>/dev/null || true
+        git remote add escrow-mirror "${remote_url}"
+        echo "[mirror] Pushing HEAD → ${MIRROR_REPO}:${MIRROR_BRANCH}"
+        git push --force escrow-mirror "HEAD:${MIRROR_BRANCH}"

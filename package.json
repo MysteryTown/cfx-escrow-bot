@@ -1,0 +1,30 @@
+{
+  "name": "cfx-escrow-bot",
+  "version": "1.0.0",
+  "description": "Discord bot + GitHub Action for automating CFX escrow uploads",
+  "main": "src/bot.js",
+  "bin": {
+    "cfx-escrow": "src/cli-escrow.js"
+  },
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "node --watch src/bot.js",
+    "escrow": "node src/cli-escrow.js"
+  },
+  "keywords": [
+    "fivem",
+    "cfx",
+    "escrow",
+    "github-action"
+  ],
+  "author": "Laith",
+  "license": "MIT",
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "axios": "^1.6.0",
+    "discord.js": "^14.14.0",
+    "dotenv": "^16.3.0",
+    "form-data": "^4.0.0",
+    "puppeteer": "^22.0.0"
+  }
+}
