@@ -83,7 +83,7 @@ async function createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, z
     writeEscrowMarker(resourceDir, created.id);
     console.log(`[escrow] Pinned ${folderName} → asset ${created.id} (saved to .escrow before upload)`);
     try {
-        await cfxPortal.uploadChunksAndComplete(created.id, zipBuffer, created.chunkSize, created.chunkCount);
+        await cfxPortal.uploadChunksAndComplete(created.id, created.versionId, zipBuffer, created.chunkSize, created.chunkCount);
         return { resource: folderName, assetId: created.id, action: 'created' };
     } catch (e) {
         const wrapped = new Error(`Asset ${created.id} created but upload failed: ${e.message}. Re-run will resume via re-upload path.`);
