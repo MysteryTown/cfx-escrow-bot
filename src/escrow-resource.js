@@ -98,9 +98,17 @@ async function escrowResource(cfxPortal, resourceDir) {
             console.log(`[escrow] Found existing asset ${assetId}; will re-upload`);
         } else {
             console.log(`[escrow] No existing asset; creating new...`);
-            const created = await cfxPortal.createAndUploadAsset(folderName, zipBuffer, zipName);
+            const created = await cfxPortal.createAsset(folderName, zipBuffer, zipName);
             writeEscrowMarker(resourceDir, created.id);
-            return { resource: folderName, assetId: created.id, action: 'created' };
+            console.log(`[escrow] Pinned ${folderName} → asset ${created.id} (saved to .escrow before upload)`);
+            try {
+                await cfxPortal.uploadChunksAndComplete(created.id, zipBuffer, created.chunkSize, created.chunkCount);
+                return { resource: folderName, assetId: created.id, action: 'created' };
+            } catch (e) {
+                const wrapped = new Error(`Asset ${created.id} created but upload failed: ${e.message}. Re-run will resume via re-upload path.`);
+                wrapped.assetId = created.id;
+                throw wrapped;
+            }
         }
     }
 

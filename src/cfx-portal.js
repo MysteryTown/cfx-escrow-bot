@@ -243,11 +243,7 @@ class CFXPortal {
         return assets.find(a => a.id === parseInt(id)) || null;
     }
 
-    /**
-     * Create a new asset AND upload the file in one flow
-     * This is how the portal does it - create + upload combined
-     */
-    async createAndUploadAsset(name, zipBuffer, filename, chunkSize = 8388608) {
+    async createAsset(name, zipBuffer, filename, chunkSize = 8388608) {
         if (!this.cookies) {
             throw new Error('Not authenticated. Call authenticate() first.');
         }
@@ -258,12 +254,11 @@ class CFXPortal {
         console.log(`[CFX] Creating new asset: ${name}`);
         console.log(`[CFX] File: ${filename} (${totalSize} bytes, ${chunkCount} chunks)`);
 
-        // Step 1: Create asset and initiate upload
-        const createResponse = await axios({
+        const response = await axios({
             method: 'POST',
             url: `${URLS.API}me/assets`,
             data: {
-                name: name,
+                name,
                 chunk_count: chunkCount,
                 chunk_size: chunkSize,
                 total_size: totalSize,
@@ -275,29 +270,31 @@ class CFXPortal {
             },
         });
 
-        const assetId = createResponse.data.asset_id || createResponse.data.id;
-        
+        const assetId = response.data.asset_id || response.data.id;
         if (!assetId) {
-            console.error('[CFX] Create response:', createResponse.data);
+            console.error('[CFX] Create response:', response.data);
             throw new Error('Failed to create asset - no asset ID returned');
         }
 
         console.log(`[CFX] Asset created with ID: ${assetId}`);
+        return { id: assetId, chunkSize, chunkCount };
+    }
 
-        // Step 2: Upload chunks
+    async uploadChunksAndComplete(assetId, zipBuffer, chunkSize, chunkCount) {
         for (let i = 0; i < chunkCount; i++) {
             const start = i * chunkSize;
             const end = Math.min(start + chunkSize, zipBuffer.length);
             const chunk = zipBuffer.slice(start, end);
-
             await this.uploadChunk(assetId, i, chunk);
             console.log(`[CFX] Uploaded chunk ${i + 1}/${chunkCount}`);
         }
-
-        // Step 3: Complete upload
         await this.completeUpload(assetId);
+    }
 
-        return { id: assetId, name: name };
+    async createAndUploadAsset(name, zipBuffer, filename, chunkSize = 8388608) {
+        const { id, chunkSize: cs, chunkCount } = await this.createAsset(name, zipBuffer, filename, chunkSize);
+        await this.uploadChunksAndComplete(id, zipBuffer, cs, chunkCount);
+        return { id, name };
     }
 
     /**
@@ -328,34 +325,49 @@ class CFXPortal {
         return { chunkCount, chunkSize };
     }
 
-    /**
-     * Upload a single chunk
-     */
-    async uploadChunk(assetId, chunkIndex, chunkData) {
-        const form = new FormData();
-        form.append('chunk_id', chunkIndex);
-        form.append('chunk', chunkData, {
-            filename: 'blob',
-            contentType: 'application/octet-stream'
-        });
-
-        await this.apiRequest(
-            'POST',
-            this.getUrl('UPLOAD_CHUNK', assetId.toString()),
-            form
-        );
+    async uploadChunk(assetId, chunkIndex, chunkData, maxRetries = 4) {
+        let lastError = null;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            const form = new FormData();
+            form.append('chunk_id', chunkIndex);
+            form.append('chunk', chunkData, {
+                filename: 'blob',
+                contentType: 'application/octet-stream'
+            });
+            try {
+                await this.apiRequest('POST', this.getUrl('UPLOAD_CHUNK', assetId.toString()), form);
+                return;
+            } catch (error) {
+                lastError = error;
+                const status = error.response?.status;
+                const retryable = !status || (status >= 500 && status < 600) || status === 429;
+                if (!retryable || attempt === maxRetries) throw error;
+                const delay = 1500 * Math.pow(2, attempt);
+                console.warn(`[CFX] chunk ${chunkIndex} → ${status || error.code}, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+        throw lastError;
     }
 
-    /**
-     * Complete the upload
-     */
-    async completeUpload(assetId) {
-        await this.apiRequest(
-            'POST',
-            this.getUrl('COMPLETE_UPLOAD', assetId.toString()),
-            {}
-        );
-        console.log('[CFX] Upload completed!');
+    async completeUpload(assetId, maxRetries = 3) {
+        let lastError = null;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            try {
+                await this.apiRequest('POST', this.getUrl('COMPLETE_UPLOAD', assetId.toString()), {});
+                console.log('[CFX] Upload completed!');
+                return;
+            } catch (error) {
+                lastError = error;
+                const status = error.response?.status;
+                const retryable = !status || (status >= 500 && status < 600) || status === 429;
+                if (!retryable || attempt === maxRetries) throw error;
+                const delay = 1500 * Math.pow(2, attempt);
+                console.warn(`[CFX] complete → ${status || error.code}, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+        throw lastError;
     }
 
     /**

@@ -128,7 +128,7 @@ runs:
         node "${{ github.action_path }}/src/cli-escrow.js" "${args[@]}"
 
     - name: Commit updated .escrow files
-      if: steps.resolve.outputs.count != '0' && inputs.commit-back == 'true'
+      if: always() && steps.resolve.outputs.count != '0' && inputs.commit-back == 'true'
       shell: bash
       env:
         COMMIT_MSG: ${{ inputs.commit-message }}
