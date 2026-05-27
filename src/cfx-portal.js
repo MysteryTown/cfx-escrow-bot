@@ -351,7 +351,10 @@ class CFXPortal {
                 chunk_size: chunkSize,
                 name: filename,
                 original_file_name: filename,
-                total_size: totalSize
+                total_size: totalSize,
+                version: '1.0.0',
+                changelog: 'Automated re-upload',
+                release_candidate: false
             }
         );
 
