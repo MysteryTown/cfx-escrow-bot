@@ -166,5 +166,8 @@ runs:
         remote_url="https://x-access-token:${MIRROR_TOKEN}@github.com/${MIRROR_REPO}.git"
         git remote remove escrow-mirror 2>/dev/null || true
         git remote add escrow-mirror "${remote_url}"
-        echo "[mirror] Pushing HEAD → ${MIRROR_REPO}:${MIRROR_BRANCH}"
-        git push --force escrow-mirror "HEAD:${MIRROR_BRANCH}"
+        # Disable thin-pack optimization: when pushing to an empty mirror, git
+        # would otherwise omit objects it assumes the remote has, causing
+        # "did not receive expected object" errors on first push.
+        git -c pack.useSparse=false -c protocol.version=2 push --no-thin --force escrow-mirror "HEAD:${MIRROR_BRANCH}"
+        echo "[mirror] Pushed HEAD → ${MIRROR_REPO}:${MIRROR_BRANCH}"
