@@ -77,6 +77,21 @@ function findResourcesWithMarker(rootDir, scanPaths = null) {
     return [...new Set(results)];
 }
 
+async function createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, zipName) {
+    console.log(`[escrow] Creating new asset for ${folderName}...`);
+    const created = await cfxPortal.createAsset(folderName, zipBuffer, zipName);
+    writeEscrowMarker(resourceDir, created.id);
+    console.log(`[escrow] Pinned ${folderName} → asset ${created.id} (saved to .escrow before upload)`);
+    try {
+        await cfxPortal.uploadChunksAndComplete(created.id, zipBuffer, created.chunkSize, created.chunkCount);
+        return { resource: folderName, assetId: created.id, action: 'created' };
+    } catch (e) {
+        const wrapped = new Error(`Asset ${created.id} created but upload failed: ${e.message}. Re-run will resume via re-upload path.`);
+        wrapped.assetId = created.id;
+        throw wrapped;
+    }
+}
+
 async function escrowResource(cfxPortal, resourceDir) {
     const folderName = path.basename(resourceDir);
     const marker = readEscrowMarker(resourceDir);
@@ -87,34 +102,29 @@ async function escrowResource(cfxPortal, resourceDir) {
     const zipName = `${folderName}.zip`;
     console.log(`[escrow] ${folderName}: ${(zipBuffer.length / 1024 / 1024).toFixed(2)} MB`);
 
-    let assetId = marker.assetId;
-    let action = 'reuploaded';
-
-    if (!assetId) {
-        console.log(`[escrow] Looking up existing asset by name: ${folderName}`);
-        const existing = await cfxPortal.findAssetByName(folderName);
-        if (existing) {
-            assetId = existing.id;
-            console.log(`[escrow] Found existing asset ${assetId}; will re-upload`);
-        } else {
-            console.log(`[escrow] No existing asset; creating new...`);
-            const created = await cfxPortal.createAsset(folderName, zipBuffer, zipName);
-            writeEscrowMarker(resourceDir, created.id);
-            console.log(`[escrow] Pinned ${folderName} → asset ${created.id} (saved to .escrow before upload)`);
-            try {
-                await cfxPortal.uploadChunksAndComplete(created.id, zipBuffer, created.chunkSize, created.chunkCount);
-                return { resource: folderName, assetId: created.id, action: 'created' };
-            } catch (e) {
-                const wrapped = new Error(`Asset ${created.id} created but upload failed: ${e.message}. Re-run will resume via re-upload path.`);
-                wrapped.assetId = created.id;
-                throw wrapped;
-            }
+    if (marker.assetId) {
+        try {
+            console.log(`[escrow] Re-uploading to pinned asset ${marker.assetId}`);
+            await cfxPortal.uploadAsset(marker.assetId, zipBuffer, zipName);
+            writeEscrowMarker(resourceDir, marker.assetId);
+            return { resource: folderName, assetId: marker.assetId, action: 'reuploaded' };
+        } catch (e) {
+            const status = e.response?.status;
+            if (status !== 404 && status !== 410) throw e;
+            console.warn(`[escrow] Pinned asset ${marker.assetId} returned ${status}; falling back to lookup/create`);
         }
     }
 
-    await cfxPortal.uploadAsset(assetId, zipBuffer, zipName);
-    writeEscrowMarker(resourceDir, assetId);
-    return { resource: folderName, assetId, action };
+    console.log(`[escrow] Looking up existing asset by name: ${folderName}`);
+    const existing = await cfxPortal.findAssetByName(folderName);
+    if (existing) {
+        console.log(`[escrow] Found existing asset ${existing.id}; re-uploading`);
+        await cfxPortal.uploadAsset(existing.id, zipBuffer, zipName);
+        writeEscrowMarker(resourceDir, existing.id);
+        return { resource: folderName, assetId: existing.id, action: 'reuploaded' };
+    }
+
+    return await createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, zipName);
 }
 
 module.exports = {
