@@ -89,9 +89,29 @@ function clearRespectingExclusions(dir, baseDir) {
     }
 }
 
-function syncWorkspaceToMirror(workspaceDir, mirrorDir) {
-    clearRespectingExclusions(mirrorDir, mirrorDir);
+function hasRsync() {
+    try {
+        execFileSync('rsync', ['--version'], { stdio: 'ignore' });
+        return true;
+    } catch { return false; }
+}
 
+function syncWorkspaceToMirror(workspaceDir, mirrorDir) {
+    const wsSlash = workspaceDir.endsWith(path.sep) ? workspaceDir : workspaceDir + path.sep;
+
+    if (hasRsync()) {
+        const excludeArgs = [];
+        for (const p of MIRROR_EXCLUDE_PATHS) excludeArgs.push('--exclude', `/${p}`);
+        excludeArgs.push('--exclude', '/.git');
+
+        const args = ['-a', '--delete', ...excludeArgs, wsSlash, mirrorDir + path.sep];
+        console.log(`[mirror] rsync ${args.join(' ')}`);
+        execFileSync('rsync', args, { stdio: 'inherit' });
+        console.log(`[mirror] rsync complete (excluded: ${MIRROR_EXCLUDE_PATHS.join(', ')}, .git)`);
+        return { filesCopied: 0, mode: 'rsync' };
+    }
+
+    clearRespectingExclusions(mirrorDir, mirrorDir);
     let copied = 0;
     for (const entry of fs.readdirSync(workspaceDir)) {
         if (MIRROR_EXCLUDE_TOP.has(entry)) continue;
@@ -100,8 +120,8 @@ function syncWorkspaceToMirror(workspaceDir, mirrorDir) {
         copyRespectingExclusions(src, dest, workspaceDir);
         copied++;
     }
-    console.log(`[mirror] Excluded from sync: ${MIRROR_EXCLUDE_PATHS.map(p => `'${p}'`).join(', ')}`);
-    return { filesCopied: copied };
+    console.log(`[mirror] cpSync complete (excluded: ${MIRROR_EXCLUDE_PATHS.join(', ')})`);
+    return { filesCopied: copied, mode: 'cpSync' };
 }
 
 async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorBranch, workspace }) {
