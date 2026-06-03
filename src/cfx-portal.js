@@ -447,15 +447,27 @@ class CFXPortal {
         return response.data.url;
     }
 
-    async downloadPack(assetId) {
-        const asset = await this.findAssetWithVersions(assetId);
-        if (!asset) throw new Error(`Asset ${assetId} not found in /me/assets`);
-        if (!asset.latestVersion) throw new Error(`Asset ${assetId} has no versions yet`);
-        if (!asset.latestPack) throw new Error(`Asset ${assetId} version ${asset.latestVersion.id} has no packs`);
+    async downloadPack(assetId, maxAttempts = 6) {
+        const delaysSec = [5, 15, 30, 60, 120];
+        let asset = null;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            asset = await this.findAssetWithVersions(assetId);
+            if (!asset) throw new Error(`Asset ${assetId} not found in /me/assets`);
+            if (!asset.latestVersion) throw new Error(`Asset ${assetId} has no versions yet`);
+
+            if (asset.latestPack) break;
+
+            if (attempt === maxAttempts - 1) {
+                throw new Error(`Asset ${assetId} version ${asset.latestVersion.id} still has no packs after ${maxAttempts} attempts (CFX pack generation may be slow; will retry on next run via catch-up)`);
+            }
+            const wait = delaysSec[attempt] || 120;
+            console.log(`[CFX] Asset ${assetId} (${asset.name}): pack not generated yet, waiting ${wait}s (attempt ${attempt + 1}/${maxAttempts})`);
+            await new Promise(r => setTimeout(r, wait * 1000));
+        }
 
         console.log(`[CFX] Downloading asset ${assetId} (${asset.name}) version ${asset.latestVersion.id} pack ${asset.latestPack.id}`);
         const signedUrl = await this.getPackDownloadUrl(assetId, asset.latestVersion.id, asset.latestPack.id);
-
         const response = await axios.get(signedUrl, { responseType: 'arraybuffer', maxContentLength: Infinity, maxBodyLength: Infinity });
         const buffer = Buffer.from(response.data);
         console.log(`[CFX] Downloaded ${(buffer.length / 1024 / 1024).toFixed(2)} MB for ${asset.name}`);
