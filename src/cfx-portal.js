@@ -337,27 +337,46 @@ class CFXPortal {
         return { id, name };
     }
 
-    async startReupload(assetId, zipBuffer, filename, chunkSize = 2097152) {
+    async startReupload(assetId, zipBuffer, filename, chunkSize = 2097152, maxAttempts = 6) {
         const totalSize = zipBuffer.length;
         const chunkCount = Math.ceil(totalSize / chunkSize);
+        const delaysSec = [10, 20, 40, 60, 120];
 
-        const version = `1.0.${Math.floor(Date.now() / 1000)}`;
-        console.log(`[CFX] Starting re-upload: ${filename} (${totalSize} bytes, ${chunkCount} chunks) as v${version}`);
-
-        const response = await this.apiRequest(
-            'POST',
-            this.getUrl('REUPLOAD', assetId.toString()),
-            {
-                chunk_count: chunkCount,
-                chunk_size: chunkSize,
-                name: filename,
-                original_file_name: filename,
-                total_size: totalSize,
-                version,
-                changelog: 'Automated re-upload',
-                release_candidate: false
+        let response = null;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const version = `1.0.${Math.floor(Date.now() / 1000)}`;
+            if (attempt === 0) {
+                console.log(`[CFX] Starting re-upload: ${filename} (${totalSize} bytes, ${chunkCount} chunks) as v${version}`);
+            } else {
+                console.log(`[CFX] Retrying re-upload start as v${version} (attempt ${attempt + 1}/${maxAttempts})`);
             }
-        );
+
+            try {
+                response = await this.apiRequest(
+                    'POST',
+                    this.getUrl('REUPLOAD', assetId.toString()),
+                    {
+                        chunk_count: chunkCount,
+                        chunk_size: chunkSize,
+                        name: filename,
+                        original_file_name: filename,
+                        total_size: totalSize,
+                        version,
+                        changelog: 'Automated re-upload',
+                        release_candidate: false
+                    }
+                );
+                break;
+            } catch (e) {
+                const status = e.response?.status;
+                const errMsg = (e.response?.data && (e.response.data.error || JSON.stringify(e.response.data))) || '';
+                const isPendingAsset = status === 500 && /failed to get asset/i.test(errMsg);
+                if (!isPendingAsset || attempt === maxAttempts - 1) throw e;
+                const wait = delaysSec[attempt] || 120;
+                console.log(`[CFX] Asset ${assetId} not ready for re-upload (CFX pack generation pending), waiting ${wait}s before retry`);
+                await new Promise(r => setTimeout(r, wait * 1000));
+            }
+        }
 
         if (response.data.errors) {
             throw new Error('Failed to start re-upload: ' + JSON.stringify(response.data.errors));
