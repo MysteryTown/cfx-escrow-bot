@@ -76,7 +76,7 @@ runs:
         cd "${GITHUB_WORKSPACE}"
 
         scan_all() {
-          echo "[resolve] Scanning all under ${RESOURCES_ROOT} for .escrow markers"
+          echo "[resolve] Scanning all under ${RESOURCES_ROOT} for .escrow markers" >&2
           find "${RESOURCES_ROOT}" -name .escrow -not -path '*/node_modules/*' -not -path '*/.git/*' -printf '%h\n' | sort -u
         }
 
