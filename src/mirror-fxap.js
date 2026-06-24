@@ -145,6 +145,12 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
         mirrorIsFresh = true;
     }
 
+    try {
+        git(['config', '--global', '--add', 'safe.directory', cloneDir], { silent: true });
+    } catch (e) {
+        console.warn(`[mirror] could not set safe.directory for ${cloneDir}: ${e.message}`);
+    }
+
     git(['config', 'user.name', 'github-actions[bot]'], { cwd: cloneDir });
     git(['config', 'user.email', 'github-actions[bot]@users.noreply.github.com'], { cwd: cloneDir });
 
