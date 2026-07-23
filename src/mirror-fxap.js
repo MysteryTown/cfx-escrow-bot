@@ -9,6 +9,7 @@ function git(args, opts = {}) {
     return execFileSync('git', args, {
         stdio: opts.silent ? ['ignore', 'pipe', 'pipe'] : ['ignore', 'inherit', 'inherit'],
         encoding: 'utf8',
+        maxBuffer: 100 * 1024 * 1024,
         ...opts,
     });
 }
