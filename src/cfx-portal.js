@@ -67,7 +67,7 @@ class CFXPortal {
             // Step 3: Follow the redirect - this completes the auth
             console.log('[CFX] Following SSO redirect...');
             await page.goto(redirectUrl, {
-                waitUntil: 'domcontentloaded',
+                waitUntil: 'networkidle2',
                 timeout: 60000
             });
 
