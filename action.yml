@@ -101,17 +101,21 @@ runs:
           else
             echo "[resolve] Diffing ${base}..HEAD"
             git fetch --no-tags --depth=50 origin "${base}" 2>/dev/null || true
-            changed=$(git diff --name-only "${base}" HEAD || true)
-            if [ -z "${changed}" ]; then
-              : > /tmp/escrow-targets.txt
+            if changed=$(git diff --name-only "${base}" HEAD 2>/dev/null); then
+              if [ -z "${changed}" ]; then
+                : > /tmp/escrow-targets.txt
+              else
+                echo "${changed}" | while IFS= read -r f; do
+                  d="$(dirname "$f")"
+                  while [ "$d" != "." ] && [ "$d" != "/" ]; do
+                    if [ -f "$d/.escrow" ]; then echo "$d"; break; fi
+                    d="$(dirname "$d")"
+                  done
+                done | sort -u > /tmp/escrow-targets.txt
+              fi
             else
-              echo "${changed}" | while IFS= read -r f; do
-                d="$(dirname "$f")"
-                while [ "$d" != "." ] && [ "$d" != "/" ]; do
-                  if [ -f "$d/.escrow" ]; then echo "$d"; break; fi
-                  d="$(dirname "$d")"
-                done
-              done | sort -u > /tmp/escrow-targets.txt
+              echo "[resolve] Base SHA unavailable; selecting unassigned markers" >&2
+              scan_unassigned > /tmp/escrow-targets.txt
             fi
           fi
         fi
