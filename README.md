@@ -191,6 +191,12 @@ The action will:
 4. Auth to CFX with the forum cookie (Puppeteer, headless Chromium).
 5. Create-or-re-upload per the `.escrow` rules above.
 6. Write asset IDs back into `.escrow` files and commit `chore(escrow): update asset ids [skip ci]`.
+
+When CFX reports `MAX_VERSIONS_REACHED`, the uploader deletes the exhausted
+asset, creates and uploads a replacement with the same resource name, and
+writes the replacement ID to `.escrow`. If any requested upload fails,
+mirroring is skipped so an older protected package cannot overwrite the
+current source in the escrowed repository.
 7. Force-push the resulting tree to `<repo>-Escrowed` so production servers can pull the unpacked escrowed version.
 
 ### Action inputs

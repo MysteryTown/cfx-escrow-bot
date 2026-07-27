@@ -5,6 +5,7 @@ const puppeteer = require('puppeteer');
 const URLS = {
     API: 'https://portal-api.cfx.re/v1/',
     SSO: 'auth/discourse?return=',
+    ASSET: 'assets/{id}',
     REUPLOAD: 'assets/{id}/re-upload',
     UPLOAD_CHUNK: 'assets/{id}/versions/{vid}/upload-chunk',
     COMPLETE_UPLOAD: 'assets/{id}/versions/{vid}/complete-upload',
@@ -279,6 +280,21 @@ class CFXPortal {
     async findAssetById(id) {
         const assets = await this.getAssets();
         return assets.find(a => a.id === parseInt(id)) || null;
+    }
+
+    async deleteAsset(assetId) {
+        try {
+            await this.apiRequest('DELETE', this.getUrl('ASSET', assetId));
+            console.log(`[CFX] Deprecated asset ${assetId}`);
+            return true;
+        } catch (error) {
+            const status = error.response?.status;
+            if (status === 404 || status === 410) {
+                console.log(`[CFX] Asset ${assetId} is already deleted`);
+                return false;
+            }
+            throw error;
+        }
     }
 
     async createAsset(name, zipBuffer, filename, chunkSize = 8388608) {

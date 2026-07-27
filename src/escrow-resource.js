@@ -92,6 +92,30 @@ async function createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, z
     }
 }
 
+function isMaxVersionsReached(error) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    const code = data && typeof data === 'object' ? data.error_code : null;
+    const message = data && typeof data === 'object'
+        ? data.error
+        : typeof data === 'string' ? data : error.message;
+    return status === 409 && (
+        code === 'MAX_VERSIONS_REACHED'
+        || /maximum number of versions/i.test(message || '')
+    );
+}
+
+async function rotateExhaustedAsset(cfxPortal, resourceDir, folderName, oldAssetId, zipBuffer, zipName) {
+    console.warn(`[escrow] Asset ${oldAssetId} reached the version limit; deprecating it and creating a replacement`);
+    await cfxPortal.deleteAsset(oldAssetId);
+    const replacement = await createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, zipName);
+    return {
+        ...replacement,
+        action: 'rotated',
+        previousAssetId: oldAssetId,
+    };
+}
+
 async function escrowResource(cfxPortal, resourceDir) {
     const folderName = path.basename(resourceDir);
     const marker = readEscrowMarker(resourceDir);
@@ -110,6 +134,16 @@ async function escrowResource(cfxPortal, resourceDir) {
             return { resource: folderName, assetId: marker.assetId, action: 'reuploaded' };
         } catch (e) {
             const status = e.response?.status;
+            if (isMaxVersionsReached(e)) {
+                return await rotateExhaustedAsset(
+                    cfxPortal,
+                    resourceDir,
+                    folderName,
+                    marker.assetId,
+                    zipBuffer,
+                    zipName
+                );
+            }
             if (status !== 404 && status !== 410) throw e;
             console.warn(`[escrow] Pinned asset ${marker.assetId} returned ${status}; falling back to lookup/create`);
         }
@@ -119,7 +153,21 @@ async function escrowResource(cfxPortal, resourceDir) {
     const existing = await cfxPortal.findAssetByName(folderName);
     if (existing) {
         console.log(`[escrow] Found existing asset ${existing.id}; re-uploading`);
-        await cfxPortal.uploadAsset(existing.id, zipBuffer, zipName);
+        try {
+            await cfxPortal.uploadAsset(existing.id, zipBuffer, zipName);
+        } catch (error) {
+            if (isMaxVersionsReached(error)) {
+                return await rotateExhaustedAsset(
+                    cfxPortal,
+                    resourceDir,
+                    folderName,
+                    existing.id,
+                    zipBuffer,
+                    zipName
+                );
+            }
+            throw error;
+        }
         writeEscrowMarker(resourceDir, existing.id);
         return { resource: folderName, assetId: existing.id, action: 'reuploaded' };
     }
@@ -133,5 +181,6 @@ module.exports = {
     writeEscrowMarker,
     zipResource,
     findResourcesWithMarker,
+    isMaxVersionsReached,
     escrowResource,
 };

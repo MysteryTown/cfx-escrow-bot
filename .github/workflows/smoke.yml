@@ -28,3 +28,6 @@ jobs:
 
       - name: CLI help
         run: node src/cli-escrow.js --help
+
+      - name: Test
+        run: npm test

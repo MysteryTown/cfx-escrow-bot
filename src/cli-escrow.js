@@ -108,7 +108,9 @@ async function main() {
         }
     }
 
-    if (wantsMirror) {
+    if (wantsMirror && hadFailure) {
+        console.error('[mirror] Skipped because one or more requested uploads failed; refusing to restore stale asset packs');
+    } else if (wantsMirror) {
         const uploads = results.filter(r => r.ok);
         try {
             console.log(`[mirror] Syncing workspace + ${uploads.length} FXAP overlay(s) → ${args.mirrorRepo}:${args.mirrorBranch}`);

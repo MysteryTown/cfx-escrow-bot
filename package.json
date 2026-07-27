@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node src/bot.js",
     "dev": "node --watch src/bot.js",
-    "escrow": "node src/cli-escrow.js"
+    "escrow": "node src/cli-escrow.js",
+    "test": "node --test"
   },
   "keywords": [
     "fivem",
