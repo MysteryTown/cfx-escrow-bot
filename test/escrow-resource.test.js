@@ -6,6 +6,7 @@ const test = require('node:test');
 
 const {
     escrowResource,
+    isAssetUnavailable,
     isMaxVersionsReached,
     readEscrowMarker,
 } = require('../src/escrow-resource');
@@ -18,6 +19,16 @@ function maxVersionsError() {
             error: 'asset has reached the maximum number of versions',
             error_code: 'MAX_VERSIONS_REACHED',
         },
+    };
+    return error;
+}
+
+function unavailableAssetError() {
+    const error = new Error('Request failed with status code 500');
+    error.code = 'CFX_ASSET_UNAVAILABLE';
+    error.response = {
+        status: 500,
+        data: { error: 'failed to get asset' },
     };
     return error;
 }
@@ -71,6 +82,54 @@ test('deprecates an exhausted pinned asset and records its replacement', async (
     assert.equal(result.previousAssetId, 1061403);
     assert.equal(result.assetId, 2000001);
     assert.equal(readEscrowMarker(resourceDir).assetId, 2000001);
+    assert.deepEqual(calls.map(call => call[0]), [
+        'uploadAsset',
+        'deleteAsset',
+        'createAsset',
+        'uploadChunksAndComplete',
+    ]);
+});
+
+test('recognizes an unavailable CFX asset', () => {
+    assert.equal(isAssetUnavailable(unavailableAssetError()), true);
+    const unrelated = new Error('internal server error');
+    unrelated.response = { status: 500, data: { error: 'database timeout' } };
+    assert.equal(isAssetUnavailable(unrelated), false);
+});
+
+test('replaces an unavailable pinned asset and records its replacement', async (t) => {
+    const { root, resourceDir } = makeResource();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const calls = [];
+    const portal = {
+        async uploadAsset(assetId) {
+            calls.push(['uploadAsset', assetId]);
+            throw unavailableAssetError();
+        },
+        async deleteAsset(assetId) {
+            calls.push(['deleteAsset', assetId]);
+        },
+        async createAsset(name) {
+            calls.push(['createAsset', name]);
+            return {
+                id: 2000002,
+                versionId: 3000002,
+                chunkSize: 8388608,
+                chunkCount: 1,
+            };
+        },
+        async uploadChunksAndComplete(assetId, versionId) {
+            calls.push(['uploadChunksAndComplete', assetId, versionId]);
+        },
+    };
+
+    const result = await escrowResource(portal, resourceDir);
+
+    assert.equal(result.action, 'replaced');
+    assert.equal(result.previousAssetId, 1061403);
+    assert.equal(result.assetId, 2000002);
+    assert.equal(readEscrowMarker(resourceDir).assetId, 2000002);
     assert.deepEqual(calls.map(call => call[0]), [
         'uploadAsset',
         'deleteAsset',

@@ -289,8 +289,9 @@ class CFXPortal {
             return true;
         } catch (error) {
             const status = error.response?.status;
-            if (status === 404 || status === 410) {
-                console.log(`[CFX] Asset ${assetId} is already deleted`);
+            const message = error.response?.data?.error || '';
+            if (status === 404 || status === 410 || (status === 500 && /failed to get asset/i.test(message))) {
+                console.log(`[CFX] Asset ${assetId} is already deleted or unavailable`);
                 return false;
             }
             throw error;
@@ -353,10 +354,10 @@ class CFXPortal {
         return { id, name };
     }
 
-    async startReupload(assetId, zipBuffer, filename, chunkSize = 2097152, maxAttempts = 6) {
+    async startReupload(assetId, zipBuffer, filename, chunkSize = 2097152, maxAttempts = 2) {
         const totalSize = zipBuffer.length;
         const chunkCount = Math.ceil(totalSize / chunkSize);
-        const delaysSec = [10, 20, 40, 60, 120];
+        const delaysSec = [10];
 
         let response = null;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -387,9 +388,13 @@ class CFXPortal {
                 const status = e.response?.status;
                 const errMsg = (e.response?.data && (e.response.data.error || JSON.stringify(e.response.data))) || '';
                 const isPendingAsset = status === 500 && /failed to get asset/i.test(errMsg);
-                if (!isPendingAsset || attempt === maxAttempts - 1) throw e;
+                if (!isPendingAsset) throw e;
+                if (attempt === maxAttempts - 1) {
+                    e.code = 'CFX_ASSET_UNAVAILABLE';
+                    throw e;
+                }
                 const wait = delaysSec[attempt] || 120;
-                console.log(`[CFX] Asset ${assetId} not ready for re-upload (CFX pack generation pending), waiting ${wait}s before retry`);
+                console.log(`[CFX] Asset ${assetId} unavailable; retrying once in ${wait}s before replacing it`);
                 await new Promise(r => setTimeout(r, wait * 1000));
             }
         }

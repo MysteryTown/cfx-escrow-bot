@@ -105,6 +105,16 @@ function isMaxVersionsReached(error) {
     );
 }
 
+function isAssetUnavailable(error) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    const message = data && typeof data === 'object'
+        ? data.error
+        : typeof data === 'string' ? data : error.message;
+    return error.code === 'CFX_ASSET_UNAVAILABLE'
+        || (status === 500 && /failed to get asset/i.test(message || ''));
+}
+
 async function rotateExhaustedAsset(cfxPortal, resourceDir, folderName, oldAssetId, zipBuffer, zipName) {
     console.warn(`[escrow] Asset ${oldAssetId} reached the version limit; deprecating it and creating a replacement`);
     await cfxPortal.deleteAsset(oldAssetId);
@@ -112,6 +122,17 @@ async function rotateExhaustedAsset(cfxPortal, resourceDir, folderName, oldAsset
     return {
         ...replacement,
         action: 'rotated',
+        previousAssetId: oldAssetId,
+    };
+}
+
+async function replaceUnavailableAsset(cfxPortal, resourceDir, folderName, oldAssetId, zipBuffer, zipName) {
+    console.warn(`[escrow] Asset ${oldAssetId} is unavailable; deprecating it and creating a replacement`);
+    await cfxPortal.deleteAsset(oldAssetId);
+    const replacement = await createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, zipName);
+    return {
+        ...replacement,
+        action: 'replaced',
         previousAssetId: oldAssetId,
     };
 }
@@ -136,6 +157,16 @@ async function escrowResource(cfxPortal, resourceDir) {
             const status = e.response?.status;
             if (isMaxVersionsReached(e)) {
                 return await rotateExhaustedAsset(
+                    cfxPortal,
+                    resourceDir,
+                    folderName,
+                    marker.assetId,
+                    zipBuffer,
+                    zipName
+                );
+            }
+            if (isAssetUnavailable(e)) {
+                return await replaceUnavailableAsset(
                     cfxPortal,
                     resourceDir,
                     folderName,
@@ -182,5 +213,6 @@ module.exports = {
     zipResource,
     findResourcesWithMarker,
     isMaxVersionsReached,
+    isAssetUnavailable,
     escrowResource,
 };
