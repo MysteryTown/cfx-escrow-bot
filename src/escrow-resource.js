@@ -127,8 +127,37 @@ async function rotateExhaustedAsset(cfxPortal, resourceDir, folderName, oldAsset
 }
 
 async function replaceUnavailableAsset(cfxPortal, resourceDir, folderName, oldAssetId, zipBuffer, zipName) {
-    console.warn(`[escrow] Asset ${oldAssetId} is unavailable; deprecating it and creating a replacement`);
+    console.warn(`[escrow] Asset ${oldAssetId} is unavailable; deprecating it and checking for an existing replacement`);
     await cfxPortal.deleteAsset(oldAssetId);
+
+    const existing = await cfxPortal.findAssetByName(folderName);
+    if (existing && existing.id !== oldAssetId) {
+        console.log(`[escrow] Recovering ${folderName} with existing replacement asset ${existing.id}`);
+        try {
+            await cfxPortal.uploadAsset(existing.id, zipBuffer, zipName);
+            writeEscrowMarker(resourceDir, existing.id);
+            return {
+                resource: folderName,
+                assetId: existing.id,
+                action: 'recovered',
+                previousAssetId: oldAssetId,
+            };
+        } catch (error) {
+            if (isMaxVersionsReached(error)) {
+                return await rotateExhaustedAsset(
+                    cfxPortal,
+                    resourceDir,
+                    folderName,
+                    existing.id,
+                    zipBuffer,
+                    zipName
+                );
+            }
+            if (!isAssetUnavailable(error)) throw error;
+            console.warn(`[escrow] Existing replacement asset ${existing.id} is also unavailable; creating a fresh asset`);
+        }
+    }
+
     const replacement = await createFreshAsset(cfxPortal, resourceDir, folderName, zipBuffer, zipName);
     return {
         ...replacement,

@@ -90,6 +90,41 @@ test('deprecates an exhausted pinned asset and records its replacement', async (
     ]);
 });
 
+test('recovers an unavailable marker using an existing replacement asset', async (t) => {
+    const { root, resourceDir } = makeResource();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const calls = [];
+    let uploadCount = 0;
+    const portal = {
+        async uploadAsset(assetId) {
+            calls.push(['uploadAsset', assetId]);
+            uploadCount++;
+            if (uploadCount === 1) throw unavailableAssetError();
+        },
+        async deleteAsset(assetId) {
+            calls.push(['deleteAsset', assetId]);
+        },
+        async findAssetByName(name) {
+            calls.push(['findAssetByName', name]);
+            return { id: 2000003, name };
+        },
+    };
+
+    const result = await escrowResource(portal, resourceDir);
+
+    assert.equal(result.action, 'recovered');
+    assert.equal(result.previousAssetId, 1061403);
+    assert.equal(result.assetId, 2000003);
+    assert.equal(readEscrowMarker(resourceDir).assetId, 2000003);
+    assert.deepEqual(calls, [
+        ['uploadAsset', 1061403],
+        ['deleteAsset', 1061403],
+        ['findAssetByName', 'mt_smallresources'],
+        ['uploadAsset', 2000003],
+    ]);
+});
+
 test('recognizes an unavailable CFX asset', () => {
     assert.equal(isAssetUnavailable(unavailableAssetError()), true);
     const unrelated = new Error('internal server error');
@@ -109,6 +144,10 @@ test('replaces an unavailable pinned asset and records its replacement', async (
         },
         async deleteAsset(assetId) {
             calls.push(['deleteAsset', assetId]);
+        },
+        async findAssetByName(name) {
+            calls.push(['findAssetByName', name]);
+            return null;
         },
         async createAsset(name) {
             calls.push(['createAsset', name]);
@@ -133,6 +172,7 @@ test('replaces an unavailable pinned asset and records its replacement', async (
     assert.deepEqual(calls.map(call => call[0]), [
         'uploadAsset',
         'deleteAsset',
+        'findAssetByName',
         'createAsset',
         'uploadChunksAndComplete',
     ]);
