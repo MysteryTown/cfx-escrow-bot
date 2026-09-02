@@ -143,6 +143,8 @@ A resource opts in to escrow by placing a `.escrow` marker file at its root, nex
 | `12345` | Re-uploads to asset ID `12345`. |
 | `{ "id": 12345, ... }` | JSON form. `id` field is used; other fields preserved on write-back. |
 
+Before using a pinned ID, the uploader verifies that the CFX asset name matches the resource folder. A copied or mismatched ID falls back to the normal name lookup and updates the marker instead of overwriting another resource.
+
 ### Required secrets
 
 - `CFX_FORUM_COOKIE` — the `_t` cookie from forum.cfx.re (see Setup → Step 2 above)

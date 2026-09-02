@@ -55,6 +55,10 @@ test('deprecates an exhausted pinned asset and records its replacement', async (
 
     const calls = [];
     const portal = {
+        async findAssetWithVersions(assetId) {
+            calls.push(['findAssetWithVersions', assetId]);
+            return { id: assetId, name: 'mt_smallresources' };
+        },
         async uploadAsset(assetId) {
             calls.push(['uploadAsset', assetId]);
             throw maxVersionsError();
@@ -83,6 +87,7 @@ test('deprecates an exhausted pinned asset and records its replacement', async (
     assert.equal(result.assetId, 2000001);
     assert.equal(readEscrowMarker(resourceDir).assetId, 2000001);
     assert.deepEqual(calls.map(call => call[0]), [
+        'findAssetWithVersions',
         'uploadAsset',
         'deleteAsset',
         'createAsset',
@@ -97,6 +102,10 @@ test('recovers an unavailable marker using an existing replacement asset', async
     const calls = [];
     let uploadCount = 0;
     const portal = {
+        async findAssetWithVersions(assetId) {
+            calls.push(['findAssetWithVersions', assetId]);
+            return { id: assetId, name: 'mt_smallresources' };
+        },
         async uploadAsset(assetId) {
             calls.push(['uploadAsset', assetId]);
             uploadCount++;
@@ -118,6 +127,7 @@ test('recovers an unavailable marker using an existing replacement asset', async
     assert.equal(result.assetId, 2000003);
     assert.equal(readEscrowMarker(resourceDir).assetId, 2000003);
     assert.deepEqual(calls, [
+        ['findAssetWithVersions', 1061403],
         ['uploadAsset', 1061403],
         ['deleteAsset', 1061403],
         ['findAssetByName', 'mt_smallresources'],
@@ -138,6 +148,10 @@ test('replaces an unavailable pinned asset and records its replacement', async (
 
     const calls = [];
     const portal = {
+        async findAssetWithVersions(assetId) {
+            calls.push(['findAssetWithVersions', assetId]);
+            return { id: assetId, name: 'mt_smallresources' };
+        },
         async uploadAsset(assetId) {
             calls.push(['uploadAsset', assetId]);
             throw unavailableAssetError();
@@ -170,6 +184,7 @@ test('replaces an unavailable pinned asset and records its replacement', async (
     assert.equal(result.assetId, 2000002);
     assert.equal(readEscrowMarker(resourceDir).assetId, 2000002);
     assert.deepEqual(calls.map(call => call[0]), [
+        'findAssetWithVersions',
         'uploadAsset',
         'deleteAsset',
         'findAssetByName',
@@ -186,6 +201,9 @@ test('does not delete an asset for an unrelated upload conflict', async (t) => {
     const conflict = new Error('Request failed with status code 409');
     conflict.response = { status: 409, data: { error_code: 'OTHER_CONFLICT' } };
     const portal = {
+        async findAssetWithVersions(assetId) {
+            return { id: assetId, name: 'mt_smallresources' };
+        },
         async uploadAsset() {
             throw conflict;
         },
@@ -197,4 +215,35 @@ test('does not delete an asset for an unrelated upload conflict', async (t) => {
     await assert.rejects(() => escrowResource(portal, resourceDir), conflict);
     assert.equal(deleted, false);
     assert.equal(readEscrowMarker(resourceDir).assetId, 1061403);
+});
+
+test('does not upload to a pinned asset owned by another resource', async (t) => {
+    const { root, resourceDir } = makeResource();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+
+    const calls = [];
+    const portal = {
+        async findAssetWithVersions(assetId) {
+            calls.push(['findAssetWithVersions', assetId]);
+            return { id: assetId, name: 'mt_other_resource' };
+        },
+        async findAssetByName(name) {
+            calls.push(['findAssetByName', name]);
+            return { id: 2000004, name };
+        },
+        async uploadAsset(assetId) {
+            calls.push(['uploadAsset', assetId]);
+        },
+    };
+
+    const result = await escrowResource(portal, resourceDir);
+
+    assert.equal(result.action, 'reuploaded');
+    assert.equal(result.assetId, 2000004);
+    assert.equal(readEscrowMarker(resourceDir).assetId, 2000004);
+    assert.deepEqual(calls, [
+        ['findAssetWithVersions', 1061403],
+        ['findAssetByName', 'mt_smallresources'],
+        ['uploadAsset', 2000004],
+    ]);
 });

@@ -176,7 +176,16 @@ async function escrowResource(cfxPortal, resourceDir) {
     const zipName = `${folderName}.zip`;
     console.log(`[escrow] ${folderName}: ${(zipBuffer.length / 1024 / 1024).toFixed(2)} MB`);
 
+    let pinnedAssetMatches = true;
     if (marker.assetId) {
+        const pinnedAsset = await cfxPortal.findAssetWithVersions(marker.assetId);
+        if (pinnedAsset?.name && pinnedAsset.name.toLowerCase() !== folderName.toLowerCase()) {
+            console.warn(`[escrow] Pinned asset ${marker.assetId} belongs to ${pinnedAsset.name}, not ${folderName}; falling back to lookup/create`);
+            pinnedAssetMatches = false;
+        }
+    }
+
+    if (marker.assetId && pinnedAssetMatches) {
         try {
             console.log(`[escrow] Re-uploading to pinned asset ${marker.assetId}`);
             await cfxPortal.uploadAsset(marker.assetId, zipBuffer, zipName);
