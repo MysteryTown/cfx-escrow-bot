@@ -252,7 +252,7 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
         ? `chore(escrow): sync MT08 + FXAP for ${uploads.map(u => u.resource).join(', ')}`
         : `chore(escrow): sync MT08 source`;
     const msg = `${subject}\n\n[skip ci]`;
-    git(['commit', '-m', msg], { cwd: cloneDir });
+    git(['commit', '--quiet', '-m', msg], { cwd: cloneDir });
 
     console.log(`[mirror] Pushing to ${mirrorRepo}:${mirrorBranch}`);
     const pushArgs = ['push', 'origin', `HEAD:${mirrorBranch}`];
