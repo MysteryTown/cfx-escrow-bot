@@ -6,7 +6,7 @@ const { findResourcesWithMarker, escrowResource } = require('./escrow-resource')
 const { mirrorFxap } = require('./mirror-fxap');
 
 function parseArgs(argv) {
-    const args = { resources: [], scanRoots: [], all: false, mirrorRepo: null, mirrorToken: null, mirrorBranch: 'main', workspace: process.cwd() };
+    const args = { resources: [], scanRoots: [], all: false, mirrorRepo: null, mirrorToken: process.env.CFX_MIRROR_TOKEN || null, mirrorBranch: 'main', workspace: process.cwd(), mirrorCacheDir: process.env.CFX_MIRROR_CACHE_DIR || null };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--resource' || a === '-r') args.resources.push(argv[++i]);
@@ -119,6 +119,7 @@ async function main() {
                 mirrorToken: args.mirrorToken,
                 mirrorBranch: args.mirrorBranch,
                 workspace: path.resolve(args.workspace),
+                mirrorCacheDir: args.mirrorCacheDir,
             });
             console.log(`[mirror] Done. ${summary.mirrored ?? 0} mirrored, ${summary.skipped ?? 0} skipped${summary.errors?.length ? `, ${summary.errors.length} errors` : ''}${summary.noop ? ' (no changes)' : ''}`);
         } catch (e) {

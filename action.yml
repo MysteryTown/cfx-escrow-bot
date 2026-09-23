@@ -132,7 +132,7 @@ runs:
       env:
         CFX_FORUM_COOKIE: ${{ inputs.forum-cookie }}
         MIRROR_REPO: ${{ inputs.mirror-repo }}
-        MIRROR_TOKEN: ${{ inputs.mirror-token }}
+        CFX_MIRROR_TOKEN: ${{ inputs.mirror-token }}
         MIRROR_BRANCH: ${{ inputs.mirror-branch }}
       run: |
         set -euo pipefail
@@ -144,11 +144,10 @@ runs:
         done < /tmp/escrow-targets.txt
 
         if [ -n "${MIRROR_REPO}" ]; then
-          if [ -z "${MIRROR_TOKEN}" ]; then
+          if [ -z "${CFX_MIRROR_TOKEN}" ]; then
             echo "::error::mirror-repo set but mirror-token is empty"; exit 1
           fi
           args+=("--mirror-repo" "${MIRROR_REPO}")
-          args+=("--mirror-token" "${MIRROR_TOKEN}")
           args+=("--mirror-branch" "${MIRROR_BRANCH}")
           args+=("--workspace" "${GITHUB_WORKSPACE}")
         fi

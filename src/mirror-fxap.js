@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const AdmZip = require('adm-zip');
 const { findResourcesWithMarker, readEscrowMarker } = require('./escrow-resource');
@@ -56,6 +57,20 @@ const MIRROR_EXCLUDE_PATHS = [
 function shouldSkipPath(relPath, excludedPaths = MIRROR_EXCLUDE_PATHS) {
     const normalized = relPath.split(path.sep).join('/');
     return excludedPaths.some(p => normalized === p || normalized.startsWith(p + '/'));
+}
+
+function gitAuthEnv(token) {
+    const value = Buffer.from(`x-access-token:${token}`).toString('base64');
+    return {
+        ...process.env,
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+        GIT_CONFIG_VALUE_0: `AUTHORIZATION: basic ${value}`,
+    };
+}
+
+function mirrorCacheName(repository, branch) {
+    return crypto.createHash('sha256').update(`${repository}\n${branch}`).digest('hex').slice(0, 32);
 }
 
 function copyRespectingExclusions(src, dest, baseSrc, excludedPaths) {
@@ -128,25 +143,47 @@ function syncWorkspaceToMirror(workspaceDir, mirrorDir, preservePaths = []) {
     return { filesCopied: copied, mode: 'cpSync' };
 }
 
-async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorBranch, workspace }) {
+async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorBranch, workspace, mirrorCacheDir = null }) {
     if (!mirrorRepo || !mirrorToken) {
         throw new Error('mirrorRepo and mirrorToken are required');
     }
 
-    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'cfx-mirror-'));
-    const cloneDir = path.join(tmpRoot, 'mirror');
-    const remoteUrl = `https://x-access-token:${mirrorToken}@github.com/${mirrorRepo}.git`;
+    const tmpRoot = mirrorCacheDir ? null : fs.mkdtempSync(path.join(os.tmpdir(), 'cfx-mirror-'));
+    const cloneDir = mirrorCacheDir
+        ? path.join(path.resolve(mirrorCacheDir), mirrorCacheName(mirrorRepo, mirrorBranch))
+        : path.join(tmpRoot, 'mirror');
+    const remoteUrl = `https://github.com/${mirrorRepo}.git`;
+    const authEnv = gitAuthEnv(mirrorToken);
 
-    console.log(`[mirror] Cloning ${mirrorRepo}:${mirrorBranch}`);
     let mirrorIsFresh = false;
-    try {
-        git(['clone', '--branch', mirrorBranch, '--single-branch', remoteUrl, cloneDir], { silent: true });
-    } catch {
-        console.log(`[mirror] Branch ${mirrorBranch} not found on ${mirrorRepo}; initializing fresh`);
-        fs.mkdirSync(cloneDir, { recursive: true });
-        git(['init', '-b', mirrorBranch], { cwd: cloneDir });
-        git(['remote', 'add', 'origin', remoteUrl], { cwd: cloneDir });
-        mirrorIsFresh = true;
+    if (mirrorCacheDir && fs.existsSync(path.join(cloneDir, '.git'))) {
+        console.log(`[mirror] Updating cached checkout for ${mirrorRepo}:${mirrorBranch}`);
+        git(['remote', 'set-url', 'origin', remoteUrl], { cwd: cloneDir, silent: true });
+        git(['fetch', 'origin', mirrorBranch, '--prune'], { cwd: cloneDir, silent: true, env: authEnv });
+        git(['checkout', '-B', mirrorBranch, `origin/${mirrorBranch}`], { cwd: cloneDir, silent: true });
+        git(['reset', '--hard', `origin/${mirrorBranch}`], { cwd: cloneDir, silent: true });
+        git(['clean', '-fdx'], { cwd: cloneDir, silent: true });
+    } else {
+        if (mirrorCacheDir) {
+            fs.mkdirSync(path.dirname(cloneDir), { recursive: true });
+            rmrf(cloneDir);
+        }
+        console.log(`[mirror] Cloning ${mirrorRepo}:${mirrorBranch}`);
+        try {
+            git(['clone', '--branch', mirrorBranch, '--single-branch', remoteUrl, cloneDir], { silent: true, env: authEnv });
+        } catch (cloneError) {
+            try {
+                git(['ls-remote', '--exit-code', '--heads', remoteUrl, `refs/heads/${mirrorBranch}`], { silent: true, env: authEnv });
+                throw cloneError;
+            } catch (probeError) {
+                if (probeError === cloneError || probeError.status !== 2) throw cloneError;
+            }
+            console.log(`[mirror] Branch ${mirrorBranch} not found on ${mirrorRepo}; initializing fresh`);
+            fs.mkdirSync(cloneDir, { recursive: true });
+            git(['init', '-b', mirrorBranch], { cwd: cloneDir });
+            git(['remote', 'add', 'origin', remoteUrl], { cwd: cloneDir });
+            mirrorIsFresh = true;
+        }
     }
 
     try {
@@ -230,7 +267,7 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
     }
 
     if (errors.length) {
-        rmrf(tmpRoot);
+        if (tmpRoot) rmrf(tmpRoot);
         throw new Error(`refusing to push mirror because ${errors.length} FXAP pack(s) could not be downloaded`);
     }
 
@@ -240,7 +277,7 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
     const status = git(['status', '--porcelain'], { cwd: cloneDir, silent: true });
     if (!status.trim()) {
         console.log('[mirror] No changes vs current mirror HEAD; skipping commit.');
-        rmrf(tmpRoot);
+        if (tmpRoot) rmrf(tmpRoot);
         return { mirrored, skipped: uploads.length - uploadedMirrored, errors, noop: true };
     }
 
@@ -257,10 +294,10 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
     console.log(`[mirror] Pushing to ${mirrorRepo}:${mirrorBranch}`);
     const pushArgs = ['push', 'origin', `HEAD:${mirrorBranch}`];
     if (mirrorIsFresh) pushArgs.splice(1, 0, '--force');
-    git(pushArgs, { cwd: cloneDir });
+    git(pushArgs, { cwd: cloneDir, env: authEnv });
 
-    rmrf(tmpRoot);
+    if (tmpRoot) rmrf(tmpRoot);
     return { mirrored, skipped: uploads.length - uploadedMirrored, errors };
 }
 
-module.exports = { mirrorFxap, extractPackTo, syncWorkspaceToMirror, MIRROR_EXCLUDE_PATHS };
+module.exports = { mirrorFxap, extractPackTo, syncWorkspaceToMirror, mirrorCacheName, MIRROR_EXCLUDE_PATHS };

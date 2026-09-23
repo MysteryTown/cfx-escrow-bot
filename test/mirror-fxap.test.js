@@ -4,7 +4,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { syncWorkspaceToMirror } = require('../src/mirror-fxap');
+const { syncWorkspaceToMirror, mirrorCacheName } = require('../src/mirror-fxap');
+
+test('mirror cache names are stable and branch-specific', () => {
+    const first = mirrorCacheName('owner/repository', 'main');
+    assert.equal(first, mirrorCacheName('owner/repository', 'main'));
+    assert.notEqual(first, mirrorCacheName('owner/repository', 'release'));
+    assert.match(first, /^[0-9a-f]{32}$/);
+});
 
 test('workspace sync preserves protected resources and updates ordinary files', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mirror-sync-test-'));
