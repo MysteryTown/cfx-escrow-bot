@@ -30,6 +30,7 @@ class CFXPortal {
         this.cookies = null;
         this.browser = null;
         this.authenticated = false;
+        this.retryBaseDelay = 1000;
     }
 
     getUrl(type, params = null) {
@@ -230,7 +231,7 @@ class CFXPortal {
     /**
      * Get list of user's assets (all pages)
      */
-    async getAssets(search = '') {
+    async getAssets(search = '', maxRetries = 4) {
         try {
             let allAssets = [];
             let page = 1;
@@ -238,7 +239,20 @@ class CFXPortal {
 
             while (hasMore) {
                 const url = `${this.getUrl('SEARCH_ASSETS')}?page=${page}&search=${encodeURIComponent(search)}&sort=asset.name&direction=asc`;
-                const response = await this.apiRequest('GET', url);
+                let response = null;
+                for (let attempt = 0; attempt <= maxRetries; attempt++) {
+                    try {
+                        response = await this.apiRequest('GET', url);
+                        break;
+                    } catch (error) {
+                        const status = error.response?.status;
+                        const retryable = !status || status === 429 || (status >= 500 && status < 600);
+                        if (!retryable || attempt === maxRetries) throw error;
+                        const delay = Math.min(this.retryBaseDelay * Math.pow(2, attempt), 10000);
+                        console.warn(`[CFX] assets page ${page} → ${status || error.code || 'network error'}, retry ${attempt + 1}/${maxRetries} in ${delay}ms`);
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    }
+                }
                 
                 const items = response.data.items || [];
                 allAssets = allAssets.concat(items);
@@ -262,7 +276,7 @@ class CFXPortal {
             return allAssets;
         } catch (error) {
             console.error('[CFX] Failed to get assets:', error.message);
-            return [];
+            throw error;
         }
     }
 
