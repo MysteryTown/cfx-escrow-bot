@@ -20,6 +20,23 @@ function rmrf(p) {
     fs.rmSync(p, { recursive: true, force: true });
 }
 
+function syncEscrowMarker(sourceDir, targetDir) {
+    const source = path.join(sourceDir, '.escrow');
+    if (!fs.existsSync(source)) return;
+    fs.copyFileSync(source, path.join(targetDir, '.escrow'));
+}
+
+function mirrorPackIsCurrent(sourceDir, mirrorDir) {
+    if (!fs.existsSync(path.join(mirrorDir, '.fxap'))) return false;
+    const sourceMarker = readEscrowMarker(sourceDir);
+    const mirrorMarker = readEscrowMarker(mirrorDir);
+    return Boolean(
+        sourceMarker?.assetId
+        && mirrorMarker?.assetId
+        && sourceMarker.assetId === mirrorMarker.assetId
+    );
+}
+
 function extractPackTo(zipBuffer, destDir, expectedFolderName) {
     rmrf(destDir);
     fs.mkdirSync(destDir, { recursive: true });
@@ -214,6 +231,7 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
             const relPath = path.relative(workspace, up.resourceDir).split(path.sep).join('/');
             const targetDir = path.join(cloneDir, relPath);
             const { entryCount, strippedPrefix } = extractPackTo(pack.zipBuffer, targetDir, up.resource);
+            syncEscrowMarker(up.resourceDir, targetDir);
             console.log(`[mirror] ${up.resource}: replaced source at ${relPath} with ${entryCount} FXAP files${strippedPrefix ? ` (stripped "${strippedPrefix}")` : ''}`);
             uploadedMirrored++;
         } catch (e) {
@@ -237,11 +255,14 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
 
         const relPath = path.relative(workspace, resourceDir).split(path.sep).join('/');
         const mirrorResourceDir = path.join(cloneDir, relPath);
-        const fxapMarkerPath = path.join(mirrorResourceDir, '.fxap');
-
-        if (fs.existsSync(fxapMarkerPath)) {
+        if (mirrorPackIsCurrent(resourceDir, mirrorResourceDir)) {
             console.log(`[mirror] ${folderName}: mirror already has .fxap, skip`);
             continue;
+        }
+
+        if (fs.existsSync(path.join(mirrorResourceDir, '.fxap'))) {
+            const mirrorMarker = readEscrowMarker(mirrorResourceDir);
+            console.log(`[mirror] ${folderName}: asset marker changed from ${mirrorMarker?.assetId || 'none'} to ${marker.assetId}; refreshing FXAP`);
         }
 
         if (!cfxPortal) {
@@ -254,6 +275,7 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
             console.log(`[mirror] ${folderName}: catching up — downloading FXAP for asset ${marker.assetId}`);
             const pack = await cfxPortal.downloadPack(marker.assetId);
             const { entryCount, strippedPrefix } = extractPackTo(pack.zipBuffer, mirrorResourceDir, folderName);
+            syncEscrowMarker(resourceDir, mirrorResourceDir);
             console.log(`[mirror] ${folderName}: caught up at ${relPath} with ${entryCount} FXAP files${strippedPrefix ? ` (stripped "${strippedPrefix}")` : ''}`);
             caughtUp++;
         } catch (e) {
@@ -300,4 +322,12 @@ async function mirrorFxap(cfxPortal, uploads, { mirrorRepo, mirrorToken, mirrorB
     return { mirrored, skipped: uploads.length - uploadedMirrored, errors };
 }
 
-module.exports = { mirrorFxap, extractPackTo, syncWorkspaceToMirror, mirrorCacheName, MIRROR_EXCLUDE_PATHS };
+module.exports = {
+    mirrorFxap,
+    extractPackTo,
+    syncWorkspaceToMirror,
+    syncEscrowMarker,
+    mirrorPackIsCurrent,
+    mirrorCacheName,
+    MIRROR_EXCLUDE_PATHS,
+};

@@ -4,7 +4,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { syncWorkspaceToMirror, mirrorCacheName } = require('../src/mirror-fxap');
+const {
+    syncWorkspaceToMirror,
+    syncEscrowMarker,
+    mirrorPackIsCurrent,
+    mirrorCacheName,
+} = require('../src/mirror-fxap');
 
 test('mirror cache names are stable and branch-specific', () => {
     const first = mirrorCacheName('owner/repository', 'main');
@@ -51,6 +56,27 @@ test('workspace sync deletes removed unprotected paths', () => {
         syncWorkspaceToMirror(workspace, mirror);
 
         assert.equal(fs.existsSync(path.join(mirror, 'removed')), false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('mirror pack is current only when asset markers match', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mirror-marker-test-'));
+    const source = path.join(root, 'source');
+    const mirror = path.join(root, 'mirror');
+
+    try {
+        fs.mkdirSync(source, { recursive: true });
+        fs.mkdirSync(mirror, { recursive: true });
+        fs.writeFileSync(path.join(source, '.escrow'), '1162411\n');
+        fs.writeFileSync(path.join(mirror, '.escrow'), '1158530\n');
+        fs.writeFileSync(path.join(mirror, '.fxap'), 'marker');
+
+        assert.equal(mirrorPackIsCurrent(source, mirror), false);
+        syncEscrowMarker(source, mirror);
+        assert.equal(mirrorPackIsCurrent(source, mirror), true);
+        assert.equal(fs.readFileSync(path.join(mirror, '.escrow'), 'utf8'), '1162411\n');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
