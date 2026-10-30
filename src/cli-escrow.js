@@ -2,14 +2,15 @@
 const path = require('path');
 const fs = require('fs');
 const CFXPortal = require('./cfx-portal');
-const { findResourcesWithMarker, escrowResource } = require('./escrow-resource');
+const { findResourcesWithMarker, readEscrowMarker, escrowResource } = require('./escrow-resource');
 const { mirrorFxap } = require('./mirror-fxap');
 
 function parseArgs(argv) {
-    const args = { resources: [], scanRoots: [], all: false, mirrorRepo: null, mirrorToken: process.env.CFX_MIRROR_TOKEN || null, mirrorBranch: 'main', workspace: process.cwd(), mirrorCacheDir: process.env.CFX_MIRROR_CACHE_DIR || null };
+    const args = { resources: [], mirrorResources: [], scanRoots: [], all: false, mirrorRepo: null, mirrorToken: process.env.CFX_MIRROR_TOKEN || null, mirrorBranch: 'main', workspace: process.cwd(), mirrorCacheDir: process.env.CFX_MIRROR_CACHE_DIR || null };
     for (let i = 2; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--resource' || a === '-r') args.resources.push(argv[++i]);
+        else if (a === '--mirror-resource') args.mirrorResources.push(argv[++i]);
         else if (a === '--scan' || a === '-s') args.scanRoots.push(argv[++i]);
         else if (a === '--all') args.all = true;
         else if (a === '--mirror-repo') args.mirrorRepo = argv[++i];
@@ -19,6 +20,7 @@ function parseArgs(argv) {
         else if (a === '--help' || a === '-h') {
             console.log(`Usage:
   cli-escrow --resource <dir>         Upload a single resource folder (must contain .escrow)
+  cli-escrow --mirror-resource <dir>  Refresh its current FXAP pack without uploading
   cli-escrow --scan <dir>             Scan dir for resources with .escrow markers
   cli-escrow --all                    Scan cwd recursively
 
@@ -63,6 +65,21 @@ async function main() {
         return true;
     });
 
+    const targetSet = new Set(targets);
+    const mirrorTargets = [...new Set(args.mirrorResources.map(r => path.resolve(r)))].filter(t => {
+        if (targetSet.has(t)) return false;
+        if (!fs.existsSync(t)) {
+            console.warn(`[mirror] Skipping missing path: ${t}`);
+            return false;
+        }
+        const marker = readEscrowMarker(t);
+        if (!marker?.assetId) {
+            console.warn(`[mirror] Skipping (no asset id in .escrow): ${t}`);
+            return false;
+        }
+        return true;
+    });
+
     const wantsMirror = !!args.mirrorRepo;
     if (!targets.length && !wantsMirror) {
         console.log('[escrow] Nothing to do (no resources, no mirror).');
@@ -74,6 +91,9 @@ async function main() {
         targets.forEach(t => console.log(`  - ${t}`));
     } else {
         console.log('[escrow] No resources to upload this run; will still sync mirror if configured.');
+    }
+    if (mirrorTargets.length) {
+        console.log(`[mirror] ${mirrorTargets.length} existing resource pack(s) selected for refresh`);
     }
 
     let portal = null;
@@ -95,6 +115,16 @@ async function main() {
     }
 
     const results = [];
+    const mirrorOverlays = mirrorTargets.map(resourceDir => {
+        const marker = readEscrowMarker(resourceDir);
+        return {
+            ok: true,
+            resourceDir,
+            resource: path.basename(resourceDir),
+            assetId: marker.assetId,
+            action: 'mirrored',
+        };
+    });
     let hadFailure = false;
     for (const dir of targets) {
         try {
@@ -111,7 +141,7 @@ async function main() {
     if (wantsMirror && hadFailure) {
         console.error('[mirror] Skipped because one or more requested uploads failed; refusing to restore stale asset packs');
     } else if (wantsMirror) {
-        const uploads = results.filter(r => r.ok);
+        const uploads = [...results.filter(r => r.ok), ...mirrorOverlays];
         try {
             console.log(`[mirror] Syncing workspace + ${uploads.length} FXAP overlay(s) → ${args.mirrorRepo}:${args.mirrorBranch}`);
             const summary = await mirrorFxap(portal, uploads, {
